@@ -23,6 +23,39 @@ public class PIPPlugin extends CordovaPlugin {
     private final PictureInPictureParams.Builder pictureInPictureParamsBuilder = new PictureInPictureParams.Builder();
     private CallbackContext callback = null;
 
+    // Aspect ratio default -- harus sama persis sama yang dipakai JS
+    // (chat.js manggil pip.enter(240, 320, ...)) biar konsisten baik
+    // masuk PiP lewat JS maupun lewat jalur native langsung di bawah.
+    private static final int DEFAULT_W = 240, DEFAULT_H = 320;
+
+    // Sumber kebenaran status "lagi ada video call aktif", di-update dari
+    // JS tiap kali call video mulai/selesai (lihat action
+    // "setVideoCallActive" & syncNativeVideoCallState() di chat.js).
+    // Dibaca langsung (synchronous, static, gak lewat exec bridge) oleh
+    // MainActivity.onUserLeaveHint() -- karena momen itu KRITIS-WAKTU:
+    // Android bisa motong akses kamera app yang di-background lebih
+    // cepat daripada round-trip WebView JS -> exec bridge -> balik lagi
+    // ke native buat manggil enterPictureInPictureMode(). Dengan flag
+    // ini, MainActivity bisa langsung manggil PiP di tempat, sinkron,
+    // di UI thread yang sama tempat onUserLeaveHint() sendiri jalan.
+    public static volatile boolean activeVideoCall = false;
+
+    // Dipanggil LANGSUNG dari MainActivity.onUserLeaveHint() (bukan lewat
+    // exec/JS) -- makanya static & nerima Activity dari luar. Aman
+    // dipanggil di UI thread (onUserLeaveHint() sendiri emang di UI thread).
+    public static void enterPipFromNative(android.app.Activity activity) {
+        if (activity == null) return;
+        try {
+            Rational aspectRatio = new Rational(DEFAULT_W, DEFAULT_H);
+            PictureInPictureParams params = new PictureInPictureParams.Builder()
+                    .setAspectRatio(aspectRatio)
+                    .build();
+            activity.enterPictureInPictureMode(params);
+        } catch (Exception e) {
+            Log.w("PIPPlugin", "enterPipFromNative gagal: " + Log.getStackTraceString(e));
+        }
+    }
+
     public void initialize(CordovaInterface cordova, CordovaWebView webView) {
         super.initialize(cordova, webView);
     }
@@ -36,6 +69,10 @@ public class PIPPlugin extends CordovaPlugin {
             return true;
         } else if(action.equals("isPip")){
             this.isPip(callbackContext);
+            return true;
+        } else if(action.equals("setVideoCallActive")){
+            activeVideoCall = args.getBoolean(0);
+            callbackContext.success();
             return true;
         } else if(action.equals("onPipModeChanged")){
             if(callback == null){
