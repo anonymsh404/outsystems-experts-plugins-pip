@@ -80,35 +80,50 @@ public class PIPPlugin extends CordovaPlugin {
     }
 
     private void enterPip(Double width, Double height, CallbackContext callbackContext) {
-        try{
-            if(width != null && width > 0 && height != null && height > 0){
-                Rational aspectRatio = new Rational(Integer.valueOf(width.intValue()), Integer.valueOf(height.intValue()));
-                pictureInPictureParamsBuilder.setAspectRatio(aspectRatio).build();
-                this.cordova.getActivity().enterPictureInPictureMode(pictureInPictureParamsBuilder.build());
+        // enterPictureInPictureMode() itu operasi Window/Activity -- WAJIB
+        // dipanggil dari UI thread. execute() plugin Cordova secara default
+        // jalan di background thread pool (cordova.getThreadPool()), BUKAN
+        // UI thread -- jadi tanpa runOnUiThread() di sini, panggilan di
+        // bawah bisa kena thread violation. Kadang ke-tangkep try/catch
+        // (gagal masuk PiP diam2), kadang exception-nya nembus di level
+        // Window/ViewRootImpl yang gak bisa ditangkep dari thread ini --
+        // itu yang bikin force close.
+        this.cordova.getActivity().runOnUiThread(() -> {
+            try{
+                if(width != null && width > 0 && height != null && height > 0){
+                    Rational aspectRatio = new Rational(Integer.valueOf(width.intValue()), Integer.valueOf(height.intValue()));
+                    pictureInPictureParamsBuilder.setAspectRatio(aspectRatio).build();
+                    this.cordova.getActivity().enterPictureInPictureMode(pictureInPictureParamsBuilder.build());
 
-                callbackContext.success("Scaled picture-in-picture mode started.");
-            } else {
-                this.cordova.getActivity().enterPictureInPictureMode();
+                    callbackContext.success("Scaled picture-in-picture mode started.");
+                } else {
+                    this.cordova.getActivity().enterPictureInPictureMode();
 
-                callbackContext.success("Default picture-in-picture mode started.");
+                    callbackContext.success("Default picture-in-picture mode started.");
+                }
+            } catch(Exception e){
+                String stackTrace = Log.getStackTraceString(e);
+                callbackContext.error(stackTrace);
             }
-        } catch(Exception e){
-            String stackTrace = Log.getStackTraceString(e);
-            callbackContext.error(stackTrace);
-        }             
+        });
     }
 
     public void isPip(CallbackContext callbackContext) {
-        try{
-            if(this.cordova.getActivity().isInPictureInPictureMode()){
-                callbackContext.success("true");
-            } else {
-                callbackContext.success("false");
+        // Sama kayak enterPip() -- baca state Activity harusnya aman dari
+        // thread manapun, tapi biar konsisten & jaga2 (beberapa OEM custom
+        // ROM diketahui rewel soal ini), tetap dibungkus UI thread.
+        this.cordova.getActivity().runOnUiThread(() -> {
+            try{
+                if(this.cordova.getActivity().isInPictureInPictureMode()){
+                    callbackContext.success("true");
+                } else {
+                    callbackContext.success("false");
+                }
+            } catch(Exception e){
+                String stackTrace = Log.getStackTraceString(e);
+                callbackContext.error(stackTrace);
             }
-        } catch(Exception e){
-            String stackTrace = Log.getStackTraceString(e);
-            callbackContext.error(stackTrace);
-        }
+        });
     }
 
     private void isPipModeSupported(CallbackContext callbackContext) {
